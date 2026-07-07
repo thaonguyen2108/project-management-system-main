@@ -1,0 +1,101 @@
+# ---------------------------------------------------------------------------
+# OS & System Temporary Files
+# ---------------------------------------------------------------------------
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# University Reports & Academic Materials (Local Files)
+# ---------------------------------------------------------------------------
+report_materials_for_word/
+report_materials_for_word.zip
+
+# ---------------------------------------------------------------------------
+# Environment Variables & Security Credentials
+# ---------------------------------------------------------------------------
+.env
+.env.*
+*.local
+*.keystore
+*.jks
+*.p12
+*.pem
+key.properties
+# Uncomment the following if you want to keep Firebase configs completely private
+# google-services.json
+# GoogleService-Info.plist
+
+# ---------------------------------------------------------------------------
+# IDEs & Editor Configuration
+# ---------------------------------------------------------------------------
+# IntelliJ IDEA
+*.iml
+*.ipr
+*.iws
+.idea/
+out/
+
+# Visual Studio Code
+.vscode/
+!.vscode/extensions.json
+*.code-workspace
+
+# ---------------------------------------------------------------------------
+# Flutter & Dart Build Artifacts
+# ---------------------------------------------------------------------------
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+/coverage/
+/doc/api/
+app.*.symbols
+app.*.map.json
+
+# ---------------------------------------------------------------------------
+# Android Platform Specifics
+# ---------------------------------------------------------------------------
+android/.gradle/
+android/local.properties
+android/sdk.dir
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/app/GeneratedPluginRegistrant.java
+
+# ---------------------------------------------------------------------------
+# iOS & macOS Platform Specifics
+# ---------------------------------------------------------------------------
+ios/Flutter/.last_build_id
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Runner/GeneratedPluginRegistrant.h
+ios/Runner/GeneratedPluginRegistrant.m
+ios/Runner/GeneratedPluginRegistrant.swift
+ios/Runner/GeneratedPluginRegistrant.objc
+Pods/
+.symlinks/
+*.xcworkspace
+!ios/Runner.xcworkspace
+
+# ---------------------------------------------------------------------------
+# Firebase Cloud Functions (NodeJS local packages)
+# ---------------------------------------------------------------------------
+functions/node_modules/
+

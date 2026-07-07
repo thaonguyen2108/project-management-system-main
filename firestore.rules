@@ -1,0 +1,616 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function projectPath(projectId) {
+      return /databases/$(database)/documents/projects/$(projectId);
+    }
+
+    function projectExists(projectId) {
+      return exists(projectPath(projectId));
+    }
+
+    function projectData(projectId) {
+      return get(projectPath(projectId)).data;
+    }
+
+    function projectDataAfter(projectId) {
+      return getAfter(projectPath(projectId)).data;
+    }
+
+    function isOwnerOfExistingProject(projectId) {
+      return signedIn() &&
+        projectExists(projectId) &&
+        projectData(projectId).ownerId == request.auth.uid;
+    }
+
+    function isOwnerOfProjectAfterWrite(projectId) {
+      return signedIn() &&
+        projectDataAfter(projectId).ownerId == request.auth.uid;
+    }
+
+    function ownerIsStillMember(data) {
+      return data.members is list && data.ownerId in data.members;
+    }
+
+    function conversationPath(conversationId) {
+      return /databases/$(database)/documents/conversations/$(conversationId);
+    }
+
+    function conversationExists(conversationId) {
+      return exists(conversationPath(conversationId));
+    }
+
+    function conversationData(conversationId) {
+      return get(conversationPath(conversationId)).data;
+    }
+
+    function isConversationMember(conversationId) {
+      return signedIn() &&
+        conversationExists(conversationId) &&
+        request.auth.uid in conversationData(conversationId).memberIds;
+    }
+
+    function otherConversationMember(data) {
+      return data.memberIds[0] == request.auth.uid
+        ? data.memberIds[1]
+        : data.memberIds[0];
+    }
+
+    function friendPath(uidA, uidB) {
+      return /databases/$(database)/documents/users/$(uidA)/friends/$(uidB);
+    }
+
+    function usersAreFriends(uidA, uidB) {
+      let friendship = get(friendPath(uidA, uidB)).data;
+      return exists(friendPath(uidA, uidB)) &&
+        friendship.uid == uidA &&
+        friendship.friendUid == uidB &&
+        friendship.friendshipId is string &&
+        friendship.friendshipId != "";
+    }
+
+    function friendRequestPath(requestId) {
+      return /databases/$(database)/documents/friendRequests/$(requestId);
+    }
+
+    function friendRequestData(requestId) {
+      return get(friendRequestPath(requestId)).data;
+    }
+
+    function friendRequestDataAfter(requestId) {
+      return getAfter(friendRequestPath(requestId)).data;
+    }
+
+    function taskPath(taskId) {
+      return /databases/$(database)/documents/tasks/$(taskId);
+    }
+
+    function taskExists(taskId) {
+      return exists(taskPath(taskId));
+    }
+
+    function taskData(taskId) {
+      return get(taskPath(taskId)).data;
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.uid == userId;
+      allow update: if signedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.uid == userId;
+      allow delete: if signedIn() && request.auth.uid == userId;
+
+      match /fcmTokens/{tokenId} {
+        allow read, create, update, delete: if signedIn() &&
+          request.auth.uid == userId;
+      }
+    }
+
+    match /users/{userId}/friends/{friendUid} {
+      function friendDocIsValid() {
+        return request.resource.data.uid == userId &&
+          request.resource.data.friendUid == friendUid &&
+          request.resource.data.friendshipId is string &&
+          request.resource.data.friendshipId != "";
+      }
+
+      function acceptedFriendRequestMatches(requestId) {
+        let acceptedRequest = friendRequestDataAfter(requestId);
+        return acceptedRequest.status == "accepted" &&
+          (
+            (
+              acceptedRequest.senderId == userId &&
+              acceptedRequest.receiverId == friendUid
+            ) ||
+            (
+              acceptedRequest.senderId == friendUid &&
+              acceptedRequest.receiverId == userId
+            )
+          );
+      }
+
+      function friendDocCreateIsValid() {
+        return friendDocIsValid() &&
+          request.resource.data.requestId is string &&
+          request.resource.data.requestId != "" &&
+          acceptedFriendRequestMatches(request.resource.data.requestId);
+      }
+
+      function friendDocIdentityStaysSame() {
+        return request.resource.data.uid == resource.data.uid &&
+          request.resource.data.friendUid == resource.data.friendUid &&
+          request.resource.data.friendshipId == resource.data.friendshipId &&
+          request.resource.data.requestId == resource.data.requestId &&
+          request.resource.data.createdAt == resource.data.createdAt;
+      }
+
+      function friendDocUpdateKeysAreSafe() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "friendName",
+          "friendEmail",
+          "friendPhotoUrl"
+        ]);
+      }
+
+      allow read: if signedIn() &&
+        (request.auth.uid == userId || request.auth.uid == friendUid);
+
+      allow create: if signedIn() &&
+        (request.auth.uid == userId || request.auth.uid == friendUid) &&
+        friendDocCreateIsValid();
+
+      allow update: if signedIn() &&
+        (request.auth.uid == userId || request.auth.uid == friendUid) &&
+        friendDocIdentityStaysSame() &&
+        friendDocUpdateKeysAreSafe();
+
+      allow delete: if signedIn() &&
+        (request.auth.uid == userId || request.auth.uid == friendUid);
+    }
+
+    match /projects/{projectId} {
+      function archivedProjectUpdateKeysAreSafe() {
+        return resource.data.isArchived != true ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "isArchived",
+            "updatedAt"
+          ]);
+      }
+
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+
+      allow create: if signedIn() &&
+        request.resource.data.id == projectId &&
+        request.resource.data.ownerId == request.auth.uid &&
+        ownerIsStillMember(request.resource.data);
+
+      allow update: if signedIn() &&
+        resource.data.ownerId == request.auth.uid &&
+        request.resource.data.id == resource.data.id &&
+        request.resource.data.ownerId == resource.data.ownerId &&
+        ownerIsStillMember(request.resource.data) &&
+        archivedProjectUpdateKeysAreSafe();
+
+      allow delete: if false;
+    }
+
+    match /tasks/{taskId} {
+      function taskProjectId() {
+        return resource.data.projectId;
+      }
+
+      function newTaskProjectId() {
+        return request.resource.data.projectId;
+      }
+
+      function ownerCanCreateTask() {
+        return signedIn() &&
+          request.resource.data.id == taskId &&
+          request.resource.data.ownerId == request.auth.uid &&
+          request.resource.data.status == "todo" &&
+          request.resource.data.isArchived == false &&
+          newTaskProjectId() is string &&
+          (
+            isOwnerOfExistingProject(newTaskProjectId()) ||
+            isOwnerOfProjectAfterWrite(newTaskProjectId())
+          );
+      }
+
+      function ownerCanManageTask() {
+        return signedIn() && isOwnerOfExistingProject(taskProjectId());
+      }
+
+      function ownerTaskUpdateKeysAreSafe() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "title",
+          "description",
+          "deadline",
+          "assigneeId",
+          "dependsOnTaskID",
+          "priority",
+          "isArchived",
+          "archivedAt",
+          "archivedBy",
+          "updatedAt"
+        ]);
+      }
+
+      function ownerKeepsTaskIdentity() {
+        return request.resource.data.id == resource.data.id &&
+          request.resource.data.projectId == resource.data.projectId &&
+          request.resource.data.ownerId == resource.data.ownerId &&
+          request.resource.data.status == resource.data.status &&
+          request.resource.data.createdAt == resource.data.createdAt;
+      }
+
+      function assigneeCanMarkDone() {
+        return signedIn() &&
+          resource.data.assigneeId == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status",
+          "updatedAt"
+        ]) &&
+          request.resource.data.status == "done" &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.projectId == resource.data.projectId &&
+          request.resource.data.ownerId == resource.data.ownerId &&
+          request.resource.data.assigneeId == resource.data.assigneeId &&
+          request.resource.data.title == resource.data.title &&
+          request.resource.data.description == resource.data.description &&
+          request.resource.data.deadline == resource.data.deadline &&
+          request.resource.data.dependsOnTaskID == resource.data.dependsOnTaskID &&
+          request.resource.data.priority == resource.data.priority &&
+          request.resource.data.isArchived == resource.data.isArchived &&
+          request.resource.data.archivedAt == resource.data.archivedAt &&
+          request.resource.data.archivedBy == resource.data.archivedBy;
+      }
+
+      function assigneeCanArchiveDoneTask() {
+        return signedIn() &&
+          resource.data.assigneeId == request.auth.uid &&
+          resource.data.status == "done" &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "isArchived",
+            "archivedAt",
+            "archivedBy",
+            "updatedAt"
+          ]) &&
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.projectId == resource.data.projectId &&
+          request.resource.data.ownerId == resource.data.ownerId &&
+          request.resource.data.assigneeId == resource.data.assigneeId &&
+          request.resource.data.title == resource.data.title &&
+          request.resource.data.description == resource.data.description &&
+          request.resource.data.deadline == resource.data.deadline &&
+          request.resource.data.dependsOnTaskID == resource.data.dependsOnTaskID &&
+          request.resource.data.priority == resource.data.priority &&
+          request.resource.data.status == resource.data.status &&
+          request.resource.data.isArchived is bool &&
+          (
+            (
+              request.resource.data.isArchived == true &&
+              request.resource.data.archivedBy == request.auth.uid
+            ) ||
+            (
+              request.resource.data.isArchived == false &&
+              request.resource.data.archivedBy == null
+            )
+          );
+      }
+
+      allow read: if signedIn() &&
+        (
+          resource.data.assigneeId == request.auth.uid ||
+          isOwnerOfExistingProject(taskProjectId())
+        );
+
+      allow create: if ownerCanCreateTask();
+
+      allow update: if
+        (ownerCanManageTask() && ownerTaskUpdateKeysAreSafe() && ownerKeepsTaskIdentity()) ||
+        assigneeCanMarkDone() ||
+        assigneeCanArchiveDoneTask();
+
+      allow delete: if ownerCanManageTask();
+    }
+
+    match /friendRequests/{requestId} {
+      function friendRequestImmutableFieldsStaySame() {
+        return request.resource.data.id == resource.data.id &&
+          request.resource.data.senderId == resource.data.senderId &&
+          request.resource.data.receiverId == resource.data.receiverId &&
+          request.resource.data.createdAt == resource.data.createdAt;
+      }
+
+      function friendRequestCreateIsValid() {
+        return signedIn() &&
+          request.resource.data.keys().hasAll([
+            "id",
+            "senderId",
+            "receiverId",
+            "status",
+            "createdAt",
+            "updatedAt"
+          ]) &&
+          request.resource.data.id == requestId &&
+          request.resource.data.senderId == request.auth.uid &&
+          request.resource.data.receiverId is string &&
+          request.resource.data.receiverId != "" &&
+          request.resource.data.receiverId != request.auth.uid &&
+          request.resource.data.status == "pending";
+      }
+
+      function senderCanCancelRequest() {
+        return signedIn() &&
+          resource.data.senderId == request.auth.uid &&
+          resource.data.status == "pending" &&
+          request.resource.data.status == "cancelled" &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "status",
+            "updatedAt",
+            "cancelledAt"
+          ]) &&
+          friendRequestImmutableFieldsStaySame();
+      }
+
+      function receiverCanRespondRequest() {
+        return signedIn() &&
+          resource.data.receiverId == request.auth.uid &&
+          resource.data.status == "pending" &&
+          request.resource.data.status in ["accepted", "declined"] &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "status",
+            "updatedAt",
+            "respondedAt"
+          ]) &&
+          friendRequestImmutableFieldsStaySame();
+      }
+
+      allow read: if signedIn() &&
+        (
+          resource.data.senderId == request.auth.uid ||
+          resource.data.receiverId == request.auth.uid
+        );
+
+      allow create: if friendRequestCreateIsValid();
+
+      allow update: if senderCanCancelRequest() || receiverCanRespondRequest();
+
+      allow delete: if false;
+    }
+
+    match /conversations/{conversationId} {
+      function directConversationCreateIsValid() {
+        return signedIn() &&
+          request.resource.data.id == conversationId &&
+          request.resource.data.type == "direct" &&
+          request.resource.data.memberIds is list &&
+          request.resource.data.memberIds.size() == 2 &&
+          request.resource.data.memberIds[0] != request.resource.data.memberIds[1] &&
+          request.auth.uid in request.resource.data.memberIds &&
+          request.resource.data.unreadBy is list &&
+          request.resource.data.isDeletedFor is list &&
+          usersAreFriends(
+            request.auth.uid,
+            otherConversationMember(request.resource.data)
+          );
+      }
+
+      function conversationIdentityStaysSame() {
+        return request.resource.data.id == resource.data.id &&
+          request.resource.data.type == resource.data.type &&
+          request.resource.data.memberIds == resource.data.memberIds &&
+          request.resource.data.createdAt == resource.data.createdAt;
+      }
+
+      function conversationUpdateKeysAreSafe() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "lastMessage",
+          "lastMessageAt",
+          "lastSenderId",
+          "updatedAt",
+          "unreadBy",
+          "isDeletedFor",
+          "memberInfo",
+          "lastReadAtBy"
+        ]);
+      }
+
+      allow get: if signedIn() &&
+        (
+          !conversationExists(conversationId) ||
+          request.auth.uid in resource.data.memberIds
+        );
+
+      allow list: if signedIn() && request.auth.uid in resource.data.memberIds;
+
+      allow create: if directConversationCreateIsValid();
+
+      allow update: if signedIn() &&
+        request.auth.uid in resource.data.memberIds &&
+        conversationIdentityStaysSame() &&
+        conversationUpdateKeysAreSafe();
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        function messageCreateIsValid() {
+          return signedIn() &&
+            isConversationMember(conversationId) &&
+            request.resource.data.id == messageId &&
+            request.resource.data.conversationId == conversationId &&
+            request.resource.data.senderId == request.auth.uid &&
+            request.resource.data.text is string &&
+            request.resource.data.text != "" &&
+            request.resource.data.isDeleted == false &&
+            usersAreFriends(
+              request.auth.uid,
+              otherConversationMember(conversationData(conversationId))
+            );
+        }
+
+        allow read: if isConversationMember(conversationId);
+
+        allow create: if messageCreateIsValid();
+
+        allow update: if false;
+
+        allow delete: if false;
+      }
+    }
+
+    match /notifications/{notificationId} {
+      function notificationBaseCreateIsValid() {
+        return signedIn() &&
+          request.resource.data.id == notificationId &&
+          request.resource.data.receiverId is string &&
+          request.resource.data.receiverId != "" &&
+          request.resource.data.actorId is string &&
+          request.resource.data.actorId == request.auth.uid &&
+          request.resource.data.title is string &&
+          request.resource.data.body is string &&
+          request.resource.data.targetType is string &&
+          request.resource.data.type in [
+            "task_assigned",
+            "task_updated",
+            "task_done",
+            "project_archived",
+            "project_unarchived",
+            "friend_request",
+            "friend_request_accepted",
+            "chat_message"
+          ] &&
+          request.resource.data.targetType in [
+            "task",
+            "project",
+            "friend_request",
+            "user",
+            "conversation",
+            "none"
+          ] &&
+          request.resource.data.isRead == false &&
+          request.resource.data.isDeleted == false;
+      }
+
+      function taskNotificationTargetIsValid(taskId) {
+        return taskId is string &&
+          taskId != "" &&
+          taskExists(taskId) &&
+          request.resource.data.targetType == "task" &&
+          request.resource.data.targetId == taskId &&
+          request.resource.data.taskId == taskId &&
+          request.resource.data.projectId == taskData(taskId).projectId;
+      }
+
+      function taskOwnerNotificationIsValid(taskId) {
+        return request.resource.data.type in ["task_assigned", "task_updated"] &&
+          taskNotificationTargetIsValid(taskId) &&
+          taskData(taskId).ownerId == request.auth.uid &&
+          request.resource.data.receiverId == taskData(taskId).assigneeId;
+      }
+
+      function taskDoneNotificationIsValid(taskId) {
+        return request.resource.data.type == "task_done" &&
+          taskNotificationTargetIsValid(taskId) &&
+          taskData(taskId).status == "done" &&
+          taskData(taskId).assigneeId == request.auth.uid &&
+          request.resource.data.receiverId == taskData(taskId).ownerId;
+      }
+
+      function projectNotificationIsValid(projectId) {
+        return projectId is string &&
+          projectId != "" &&
+          projectExists(projectId) &&
+          request.resource.data.type in [
+            "project_archived",
+            "project_unarchived"
+          ] &&
+          request.resource.data.targetType == "project" &&
+          request.resource.data.targetId == projectId &&
+          request.resource.data.projectId == projectId &&
+          projectData(projectId).ownerId == request.auth.uid &&
+          projectData(projectId).members is list &&
+          request.resource.data.receiverId in projectData(projectId).members;
+      }
+
+      function friendRequestNotificationIsValid(requestId) {
+        return requestId is string &&
+          requestId != "" &&
+          request.resource.data.type == "friend_request" &&
+          request.resource.data.targetType == "friend_request" &&
+          request.resource.data.targetId == requestId &&
+          friendRequestData(requestId).status == "pending" &&
+          friendRequestData(requestId).senderId == request.auth.uid &&
+          request.resource.data.receiverId == friendRequestData(requestId).receiverId;
+      }
+
+      function friendAcceptedNotificationIsValid() {
+        return request.resource.data.type == "friend_request_accepted" &&
+          request.resource.data.targetType == "user" &&
+          request.resource.data.targetId == request.auth.uid &&
+          usersAreFriends(request.auth.uid, request.resource.data.receiverId);
+      }
+
+      function chatMessageNotificationIsValid(conversationId) {
+        return conversationId is string &&
+          conversationId != "" &&
+          conversationExists(conversationId) &&
+          request.resource.data.type == "chat_message" &&
+          request.resource.data.targetType == "conversation" &&
+          request.resource.data.targetId == conversationId &&
+          request.auth.uid in conversationData(conversationId).memberIds &&
+          request.resource.data.receiverId in conversationData(conversationId).memberIds &&
+          request.resource.data.receiverId != request.auth.uid;
+      }
+
+      function notificationCreateIsValid() {
+        return notificationBaseCreateIsValid() &&
+          (
+            taskOwnerNotificationIsValid(request.resource.data.taskId) ||
+            taskDoneNotificationIsValid(request.resource.data.taskId) ||
+            projectNotificationIsValid(request.resource.data.projectId) ||
+            friendRequestNotificationIsValid(request.resource.data.targetId) ||
+            friendAcceptedNotificationIsValid() ||
+            chatMessageNotificationIsValid(request.resource.data.targetId)
+          );
+      }
+
+      function notificationUpdateKeysAreSafe() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "isRead",
+          "readAt",
+          "isDeleted",
+          "deletedAt"
+        ]);
+      }
+
+      allow read: if signedIn() && resource.data.receiverId == request.auth.uid;
+
+      allow create: if notificationCreateIsValid();
+
+      allow update: if signedIn() &&
+        resource.data.receiverId == request.auth.uid &&
+        request.resource.data.receiverId == resource.data.receiverId &&
+        request.resource.data.id == resource.data.id &&
+        request.resource.data.type == resource.data.type &&
+        request.resource.data.title == resource.data.title &&
+        request.resource.data.body == resource.data.body &&
+        request.resource.data.targetType == resource.data.targetType &&
+        request.resource.data.targetId == resource.data.targetId &&
+        request.resource.data.projectId == resource.data.projectId &&
+        request.resource.data.taskId == resource.data.taskId &&
+        request.resource.data.actorId == resource.data.actorId &&
+        notificationUpdateKeysAreSafe();
+
+      allow delete: if false;
+    }
+  }
+}
